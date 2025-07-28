@@ -2,11 +2,12 @@ const express = require("express");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 const pdfParse = require("pdf-parse");
+const serviceAccount = require("./pinas-price-monitoring-app-firebase-adminsdk-fbsvc-e2353bb371.json");
 
 const app = express();
 
 admin.initializeApp({
-  credential: admin.credential.applicationDefault(),
+  credential: admin.credential.cert(serviceAccount),
 });
 const db = admin.firestore();
 
