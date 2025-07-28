@@ -1,22 +1,14 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * const {onCall} = require("firebase-functions/v2/https");
- * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
-
-const {setGlobalOptions} = require("firebase-functions");
-const functions = require("firebase-functions");
+const express = require("express");
 const admin = require("firebase-admin");
 const fetch = require("node-fetch");
 const pdfParse = require("pdf-parse");
 
-admin.initializeApp();
-const db = admin.firestore();
+const app = express();
 
-setGlobalOptions({maxInstances: 10});
+admin.initializeApp({
+  credential: admin.credential.applicationDefault(),
+});
+const db = admin.firestore();
 
 /**
  * Gets the latest PDF URL from the DA website.
@@ -25,14 +17,12 @@ setGlobalOptions({maxInstances: 10});
 async function getLatestPdfUrl() {
   const res = await fetch("https://www.da.gov.ph/price-monitoring/");
   const html = await res.text();
-  // Simple regex to find PDF links (improve as needed)
   const pdfLinks = [
     ...html.matchAll(
-        /href="(https:\/\/www\.da\.gov\.ph\/wp-content\/uploads\/[^"]+\.pdf)"/g,
+      /href="(https:\/\/www\.da\.gov\.ph\/wp-content\/uploads\/[^"]+\.pdf)"/g,
     ),
   ];
   if (pdfLinks.length === 0) throw new Error("No PDF found");
-  // Assume first link is latest
   return pdfLinks[0][1];
 }
 
@@ -49,37 +39,15 @@ async function parsePdf(url) {
 }
 
 /**
- * Scheduled function to update prices from the DA website every 7 days.
- */
-exports.updatePrices = functions.pubsub
-    .schedule("every 7 days")
-    .onRun(async (context) => {
-      try {
-        const pdfUrl = await getLatestPdfUrl();
-        const pdfText = await parsePdf(pdfUrl);
-        // TODO: Extract price data from pdfText (parse table)
-        // Example: Save raw text for now
-        await db.collection("prices").add({
-          url: pdfUrl,
-          rawText: pdfText,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        console.log("Prices updated from", pdfUrl);
-      } catch (err) {
-        console.error("Error updating prices:", err);
-      }
-    });
-
-/**
  * HTTP endpoint to get the latest prices.
  */
-exports.getLatestPrices = functions.https.onRequest(async (req, res) => {
+app.get("/getLatestPrices", async (req, res) => {
   try {
     const snapshot = await db
-        .collection("prices")
-        .orderBy("timestamp", "desc")
-        .limit(1)
-        .get();
+      .collection("prices")
+      .orderBy("timestamp", "desc")
+      .limit(1)
+      .get();
     if (snapshot.empty) {
       res.status(404).send("No price data found");
       return;
@@ -94,7 +62,7 @@ exports.getLatestPrices = functions.https.onRequest(async (req, res) => {
 /**
  * HTTP endpoint to manually update prices from the DA website.
  */
-exports.updatePrices = functions.https.onRequest(async (req, res) => {
+app.post("/updatePrices", async (req, res) => {
   try {
     const pdfUrl = await getLatestPdfUrl();
     const pdfText = await parsePdf(pdfUrl);
@@ -110,10 +78,7 @@ exports.updatePrices = functions.https.onRequest(async (req, res) => {
   }
 });
 
-// Create and deploy your first functions
-// https://firebase.google.com/docs/functions/get-started
-
-// exports.helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
