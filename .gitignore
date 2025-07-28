@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Logs
 logs
 *.log
@@ -69,3 +70,7 @@ node_modules/
 .dataconnect
 
 functions/pinas-price-monitoring-app-firebase-adminsdk-fbsvc-e2353bb371.json
+=======
+node_modules/
+*.local
+>>>>>>> de857885cff69098430db0f4686f8825a703908e
