@@ -134,6 +134,7 @@ app.post('/update-latest-daily-prices', async (req, res) => {
         if (cols.length < 2) continue;
         // Market name and city (if any)
         let [marketCol, ...priceCols] = cols;
+        if (!marketCol || marketCol === '') continue; // skip blank market rows
         let market = marketCol;
         let city = '';
         if (marketCol.includes('/')) {
@@ -157,11 +158,14 @@ app.post('/update-latest-daily-prices', async (req, res) => {
             high
           });
         }
-        markets.push({
-          market,
-          city,
-          prices
-        });
+        // Only add if market name is not blank and at least one price is present
+        if (market && prices.length > 0) {
+          markets.push({
+            market,
+            city,
+            prices
+          });
+        }
       }
       tables.push({
         category,
