@@ -113,67 +113,138 @@ app.post('/update-latest-daily-prices', async (req, res) => {
           break;
         }
       }
-      // Find next table header (MARKET ...)
-      let headerIdx = lines.slice(i).findIndex(l => l.toUpperCase().startsWith('MARKET'));
-      if (headerIdx === -1) break;
-      headerIdx += i;
-      const headerLine = lines[headerIdx];
-      // Always treat the first column as the market name, rest as commodities
-      const headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
-      if (headerParts.length < 2) { i = headerIdx + 1; continue; }
-      // Remove the first column (market/city), rest are commodities
-      const commodities = headerParts.slice(1);
-      // Parse each market row until a non-table line or next table header is found
-      const markets = [];
-      let j = headerIdx + 1;
-      for (; j < lines.length; j++) {
-        const row = lines[j];
-        if (/^Source:|^Note:|^\*/i.test(row)) break;
-        if (row.toUpperCase().startsWith('MARKET')) break;
-        // Split row by 2+ spaces (table columns)
-        const cols = row.split(/\s{2,}/).map(c => c.trim());
-        if (cols.length < 2) continue;
-        // First column is always market name (may include city)
-        let [marketCol, ...priceCols] = cols;
-        if (!marketCol || marketCol === '') continue; // skip blank market rows
-        let market = marketCol;
-        let city = '';
-        if (marketCol.includes('/')) {
-          [market, city] = marketCol.split('/').map(s => s.trim());
-        }
-        // Map prices to commodities
-        const prices = [];
-        for (let k = 0; k < commodities.length && k < priceCols.length; k++) {
-          let priceText = priceCols[k];
-          let low = null, high = null;
-          if (/not available/i.test(priceText)) {
-            low = high = null;
-          } else if (priceText.includes('-')) {
-            [low, high] = priceText.split('-').map(s => parseFloat(s.replace(/[^\d.]/g, '')));
-          } else {
-            low = high = parseFloat(priceText.replace(/[^\d.]/g, ''));
-          }
-          prices.push({
-            commodity: commodities[k],
-            low,
-            high
-          });
-        }
-        // Only add if market name is not blank and at least one price is present
-        if (market && prices.length > 0) {
-          markets.push({
-            market,
-            city,
-            prices
-          });
-        }
+
+      // Detect table type: market-based or commodity-based
+      let headerIdx = -1;
+      let tableType = '';
+      // Look for MARKET or COMMODITIES as first column
+      for (let idx = i; idx < lines.length; idx++) {
+        const l = lines[idx].toUpperCase();
+        if (l.startsWith('MARKET')) { headerIdx = idx; tableType = 'market'; break; }
+        if (l.startsWith('COMMODITIES')) { headerIdx = idx; tableType = 'commodity'; break; }
       }
-      tables.push({
-        category,
-        commodities,
-        markets
-      });
-      i = j + 1;
+      if (headerIdx === -1) break;
+      const headerLine = lines[headerIdx];
+
+      if (tableType === 'market') {
+        // Market-based table: MARKET, then commodities
+        let headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
+        if (headerParts.length < 2) {
+          headerParts = headerLine.split(/\s+/).map(h => h.trim()).filter(h => h);
+        }
+        if (headerParts.length < 2) { i = headerIdx + 1; continue; }
+        let commodities = headerParts.slice(1);
+        if (commodities.some(c => /market/i.test(c))) { i = headerIdx + 1; continue; }
+        const markets = [];
+        let j = headerIdx + 1;
+        for (; j < lines.length; j++) {
+          const row = lines[j];
+          if (/^Source:|^Note:|^\*/i.test(row)) break;
+          if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
+          const match = row.match(/^([^\d]+?)(\d.*)$/);
+          if (!match) continue;
+          let marketCol = match[1].trim();
+          let priceString = match[2].trim();
+          if (!marketCol || /\d/.test(marketCol[0])) continue;
+          let market = marketCol;
+          let city = '';
+          if (marketCol.includes('/')) {
+            [market, city] = marketCol.split('/').map(s => s.trim());
+          }
+          let priceCols = priceString.split(/\s{2,}/).map(p => p.trim()).filter(p => p);
+          if (priceCols.length < commodities.length) {
+            priceCols = priceString.split(/\s+/).map(p => p.trim()).filter(p => p);
+          }
+          const prices = [];
+          for (let k = 0; k < commodities.length && k < priceCols.length; k++) {
+            let priceText = priceCols[k];
+            let low = null, high = null;
+            if (/not available/i.test(priceText)) {
+              low = high = null;
+            } else if (priceText.includes('-')) {
+              [low, high] = priceText.split('-').map(s => parseFloat(s.replace(/[^\d.]/g, '')));
+            } else {
+              low = high = parseFloat(priceText.replace(/[^\d.]/g, ''));
+            }
+            if (!isNaN(low) || !isNaN(high)) {
+              prices.push({
+                commodity: commodities[k],
+                low,
+                high
+              });
+            }
+          }
+          if (market && prices.length > 0) {
+            markets.push({
+              market,
+              city,
+              prices
+            });
+          }
+        }
+        if (commodities.length > 0 && markets.length > 0) {
+          tables.push({
+            type: 'market',
+            category,
+            commodities,
+            markets
+          });
+        }
+        i = j + 1;
+      } else if (tableType === 'commodity') {
+        // Commodity-based table: COMMODITIES, LOW, HIGH, PREVAILING, AVERAGE
+        let headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
+        if (headerParts.length < 2) {
+          headerParts = headerLine.split(/\s+/).map(h => h.trim()).filter(h => h);
+        }
+        // Find the column indices for each field
+        const colIdx = {
+          name: headerParts.findIndex(h => /commodities?/i.test(h)),
+          low: headerParts.findIndex(h => /low/i.test(h)),
+          high: headerParts.findIndex(h => /high/i.test(h)),
+          prevailing: headerParts.findIndex(h => /prevailing/i.test(h)),
+          average: headerParts.findIndex(h => /average/i.test(h)),
+        };
+        const commodities = [];
+        let j = headerIdx + 1;
+        for (; j < lines.length; j++) {
+          const row = lines[j];
+          if (/^Source:|^Note:|^\*/i.test(row)) break;
+          if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
+          // Split row by 2+ spaces, fallback to 1+ space
+          let cols = row.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
+          if (cols.length < 2) {
+            cols = row.split(/\s+/).map(c => c.trim()).filter(c => c);
+          }
+          if (cols.length < 2) continue;
+          // If the first column is empty or not a commodity name, skip
+          if (!cols[colIdx.name] || /low|high|prevailing|average/i.test(cols[colIdx.name])) continue;
+          // Parse values
+          const getNum = (idx) => {
+            if (idx === -1 || !cols[idx]) return null;
+            const val = parseFloat(cols[idx].replace(/[^\d.\-]/g, ''));
+            return isNaN(val) ? null : val;
+          };
+          commodities.push({
+            name: cols[colIdx.name],
+            low: getNum(colIdx.low),
+            high: getNum(colIdx.high),
+            prevailing: getNum(colIdx.prevailing),
+            average: getNum(colIdx.average)
+          });
+        }
+        if (commodities.length > 0) {
+          tables.push({
+            type: 'commodity',
+            category,
+            commodities
+          });
+        }
+        i = j + 1;
+      } else {
+        // Unknown table type, skip
+        i = headerIdx + 1;
+      }
     }
     const priceData = {
       date: latest.date.toISOString().slice(0, 10),
