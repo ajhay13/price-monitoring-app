@@ -114,87 +114,117 @@ app.post('/update-latest-daily-prices', async (req, res) => {
         }
       }
 
-      // Detect table type: market-based or commodity-based
-      let headerIdx = -1;
-      let tableType = '';
-      // Look for MARKET or COMMODITIES as first column
-      for (let idx = i; idx < lines.length; idx++) {
-        const l = lines[idx].toUpperCase();
-        if (l.startsWith('MARKET')) { headerIdx = idx; tableType = 'market'; break; }
-        if (l.startsWith('COMMODITIES')) { headerIdx = idx; tableType = 'commodity'; break; }
-      }
-      if (headerIdx === -1) break;
-      const headerLine = lines[headerIdx];
+      // Always attempt to extract a market-based table from the raw text using known market names
+      // Build a list of known market names (from the PDF, or use a static list for NCR)
+      const knownMarkets = [
+        'Agora Public Market/San Juan',
+        'Balintawak (Cloverleaf) Market',
+        'Cartimar Market',
+        'Commonwealth Market/Quezon City',
+        'Dagonoy Market',
+        'Guadalupe Public Market/Makati',
+        'Kamuning Public Market',
+        'La Huerta Market/Parañaque',
+        'New Las Piñas City Public Market',
+        'Mandaluyong Public Market',
+        'Marikina Public Market',
+        'Mega Q-mart/Quezon City',
+        'Pamilihang Lungsod ng Muntinlupa',
+        'Muñoz Market/Quezon City',
+        'Murphy Public Market',
+        'Navotas Agora Market',
+        'New Marulas Public Market/Valenzuela',
+        'Obrero Market',
+        'Paco Market',
+        'Pasay City Market',
+        'Pasig City Mega Market',
+        'Pateros Market',
+        'Pritil Market/Manila',
+        'Quinta Market/Manila',
+        'San Andres Market/Manila',
+        'Trabajo Market'
+      ];
 
-      if (tableType === 'market') {
-        // Market-based table: MARKET, then commodities
+      // Try to find a market-based table header (MARKET ...)
+      let headerIdx = lines.findIndex(l => l.toUpperCase().startsWith('MARKET'));
+      let commodities = [];
+      if (headerIdx !== -1) {
+        let headerLine = lines[headerIdx];
+        let headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
+        if (headerParts.length < 2) {
+    const lines = data.text.split('\n').map(l => l.trim()).filter(l => l);
+    const tables = [];
+    const knownMarkets = [
+      'Agora Public Market/San Juan',
+      'Balintawak (Cloverleaf) Market',
+      'Cartimar Market',
+      'Commonwealth Market/Quezon City',
+      'Dagonoy Market',
+      'Guadalupe Public Market/Makati',
+      'Kamuning Public Market',
+      'La Huerta Market/Parañaque',
+      'New Las Piñas City Public Market',
+      'Mandaluyong Public Market',
+      'Marikina Public Market',
+      'Mega Q-mart/Quezon City',
+      'Pamilihang Lungsod ng Muntinlupa',
+      'Muñoz Market/Quezon City',
+      'Murphy Public Market',
+      'Navotas Agora Market',
+      'New Marulas Public Market/Valenzuela',
+      'Obrero Market',
+      'Paco Market',
+      'Pasay City Market',
+      'Pasig City Mega Market',
+      'Pateros Market',
+      'Pritil Market/Manila',
+      'Quinta Market/Manila',
+      'San Andres Market/Manila',
+      'Trabajo Market'
+    ];
+
+    // Parse all market-based tables
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toUpperCase().startsWith('MARKET')) {
+        // Try to find a category/section title above the table header
+        let category = '';
+        for (let lookback = i - 1; lookback >= 0 && lookback >= i - 4; lookback--) {
+          const catLine = lines[lookback] || '';
+          if (/rice|vegetable|fruit|fish|meat|egg|spice|sugar|other|commodity|poultry|livestock|summary/i.test(catLine) && catLine.length < 60) {
+            category = catLine.replace(/:|\*/g, '').trim();
+            break;
+          }
+        }
+        // Extract commodities from header line
+        let headerLine = lines[i];
         let headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
         if (headerParts.length < 2) {
           headerParts = headerLine.split(/\s+/).map(h => h.trim()).filter(h => h);
         }
-        if (headerParts.length < 2) { i = headerIdx + 1; continue; }
-        let commodities = headerParts.slice(1);
-        if (commodities.some(c => /market/i.test(c))) { i = headerIdx + 1; continue; }
-
-        // Build a list of known market names (from the PDF, or use a static list for NCR)
-        const knownMarkets = [
-          'Agora Public Market/San Juan',
-          'Balintawak (Cloverleaf) Market',
-          'Cartimar Market',
-          'Commonwealth Market/Quezon City',
-          'Dagonoy Market',
-          'Guadalupe Public Market/Makati',
-          'Kamuning Public Market',
-          'La Huerta Market/Parañaque',
-          'New Las Piñas City Public Market',
-          'Mandaluyong Public Market',
-          'Marikina Public Market',
-          'Mega Q-mart/Quezon City',
-          'Pamilihang Lungsod ng Muntinlupa',
-          'Muñoz Market/Quezon City',
-          'Murphy Public Market',
-          'Navotas Agora Market',
-          'New Marulas Public Market/Valenzuela',
-          'Obrero Market',
-          'Paco Market',
-          'Pasay City Market',
-          'Pasig City Mega Market',
-          'Pateros Market',
-          'Pritil Market/Manila',
-          'Quinta Market/Manila',
-          'San Andres Market/Manila',
-          'Trabajo Market'
-        ];
-
-        // Join all lines after the header into a single string for easier regex parsing
-        let tableText = '';
-        let j = headerIdx + 1;
-        for (; j < lines.length; j++) {
+        const commodities = headerParts.slice(1);
+        // Parse table rows until next header or end
+        const markets = [];
+        for (let j = i + 1; j < lines.length; j++) {
           const row = lines[j];
           if (/^Source:|^Note:|^\*/i.test(row)) break;
           if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
-          tableText += ' ' + row;
-        }
-
-        // For each known market, extract its price ranges
-        const markets = [];
-        for (let m = 0; m < knownMarkets.length; m++) {
-          const marketName = knownMarkets[m];
-          // Find this market in the text
-          const regex = new RegExp(marketName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*([\d\.-]+(?:-\d+\.\d+)?(?:[\s\d\.-]+)*)');
-          const match = tableText.match(regex);
-          if (!match) continue;
-          // Extract price ranges (e.g., 40.00-48.00 140.00-140.00 6.00-8.00 ...)
-          let priceString = match[1].trim();
-          // Split priceString into price ranges (look for patterns like 40.00-48.00 or 140.00)
-          let priceRanges = priceString.match(/\d+\.\d+(?:-\d+\.\d+)?/g) || [];
-          // If there are more price ranges than commodities, trim
-          if (priceRanges.length > commodities.length) priceRanges = priceRanges.slice(0, commodities.length);
+          // Find if row starts with a known market
+          let matchedMarket = knownMarkets.find(mkt => row.startsWith(mkt));
+          if (!matchedMarket) continue;
+          // Remove market name from row, get price columns
+          let pricePart = row.replace(matchedMarket, '').trim();
+          // Split price columns by 2+ spaces, fallback to 1+ space
+          let priceCols = pricePart.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
+          if (priceCols.length < commodities.length) {
+            priceCols = pricePart.split(/\s+/).map(c => c.trim()).filter(c => c);
+          }
+          // If there are more price columns than commodities, trim
+          if (priceCols.length > commodities.length) priceCols = priceCols.slice(0, commodities.length);
           // If there are fewer, pad with nulls
-          while (priceRanges.length < commodities.length) priceRanges.push(null);
+          while (priceCols.length < commodities.length) priceCols.push(null);
           const prices = [];
           for (let k = 0; k < commodities.length; k++) {
-            let priceText = priceRanges[k];
+            let priceText = priceCols[k];
             let low = null, high = null;
             if (!priceText) {
               low = high = null;
@@ -209,10 +239,10 @@ app.post('/update-latest-daily-prices', async (req, res) => {
               high
             });
           }
-          let market = marketName;
+          let market = matchedMarket;
           let city = '';
-          if (marketName.includes('/')) {
-            [market, city] = marketName.split('/').map(s => s.trim());
+          if (matchedMarket.includes('/')) {
+            [market, city] = matchedMarket.split('/').map(s => s.trim());
           }
           markets.push({
             market,
@@ -228,80 +258,59 @@ app.post('/update-latest-daily-prices', async (req, res) => {
             markets
           });
         }
-        i = j + 1;
-      } else if (tableType === 'commodity') {
-        // Commodity-based table: COMMODITIES, LOW, HIGH, PREVAILING, AVERAGE
-        let headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
-        if (headerParts.length < 2) {
-          headerParts = headerLine.split(/\s+/).map(h => h.trim()).filter(h => h);
-        }
-        // Find the column indices for each field
-        const colIdx = {
-          name: headerParts.findIndex(h => /commodities?/i.test(h)),
-          low: headerParts.findIndex(h => /low/i.test(h)),
-          high: headerParts.findIndex(h => /high/i.test(h)),
-          prevailing: headerParts.findIndex(h => /prevailing/i.test(h)),
-          average: headerParts.findIndex(h => /average/i.test(h)),
-        };
-        const commodities = [];
-        let j = headerIdx + 1;
-        for (; j < lines.length; j++) {
-          const row = lines[j];
-          if (/^Source:|^Note:|^\*/i.test(row)) break;
-          if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
-          // Split row by 2+ spaces, fallback to 1+ space
-          let cols = row.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
-          if (cols.length < 2) {
-            cols = row.split(/\s+/).map(c => c.trim()).filter(c => c);
-          }
-          if (cols.length < 2) continue;
-          // If the first column is empty or not a commodity name, skip
-          if (!cols[colIdx.name] || /low|high|prevailing|average/i.test(cols[colIdx.name])) continue;
-          // Parse values
-          const getNum = (idx) => {
-            if (idx === -1 || !cols[idx]) return null;
-            const val = parseFloat(cols[idx].replace(/[^\d.\-]/g, ''));
-            return isNaN(val) ? null : val;
-          };
-          commodities.push({
-            name: cols[colIdx.name],
-            low: getNum(colIdx.low),
-            high: getNum(colIdx.high),
-            prevailing: getNum(colIdx.prevailing),
-            average: getNum(colIdx.average)
-          });
-        }
-        if (commodities.length > 0) {
-          tables.push({
-            type: 'commodity',
-            category,
-            commodities
-          });
-        }
-        i = j + 1;
-      } else {
-        // Unknown table type, skip
-        i = headerIdx + 1;
       }
     }
-    const priceData = {
-      date: latest.date.toISOString().slice(0, 10),
-      url: latest.url,
-      tables,
-      rawText: data.text // Keep for debugging, can remove later
-    };
-    await db.collection('dailypricereport').add(priceData);
-    res.json({ success: true, message: 'Latest daily price PDF parsed and stored.', priceData });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
-// SAMPLE DOCUMENT STRUCTURE (for reference):
-// {
-//   date: "2025-07-26",
-//   url: "https://www.da.gov.ph/wp-content/uploads/2025/07/Price-Monitoring-July-26-2025.pdf",
-//   tables: [
-//     {
-//       category: "Vegetables",
-//       commodities: ["Eggplant", "Tomato", ...],
+    // Parse commodity-based table (if any)
+    let headerIdx2 = lines.findIndex(l => l.toUpperCase().startsWith('COMMODITIES'));
+    if (headerIdx2 !== -1) {
+      let headerLine = lines[headerIdx2];
+      let headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
+      if (headerParts.length < 2) {
+        headerParts = headerLine.split(/\s+/).map(h => h.trim()).filter(h => h);
+      }
+      // Find the column indices for each field
+      const colIdx = {
+        name: headerParts.findIndex(h => /commodities?/i.test(h)),
+        low: headerParts.findIndex(h => /low/i.test(h)),
+        high: headerParts.findIndex(h => /high/i.test(h)),
+        prevailing: headerParts.findIndex(h => /prevailing/i.test(h)),
+        average: headerParts.findIndex(h => /average/i.test(h)),
+      };
+      const commodities2 = [];
+      let j = headerIdx2 + 1;
+      for (; j < lines.length; j++) {
+        const row = lines[j];
+        if (/^Source:|^Note:|^\*/i.test(row)) break;
+        if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
+        // Split row by 2+ spaces, fallback to 1+ space
+        let cols = row.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
+        if (cols.length < 2) {
+          cols = row.split(/\s+/).map(c => c.trim()).filter(c => c);
+        }
+        if (cols.length < 2) continue;
+        // If the first column is empty or not a commodity name, skip
+        if (!cols[colIdx.name] || /low|high|prevailing|average/i.test(cols[colIdx.name])) continue;
+        // Parse values
+        const getNum = (idx) => {
+          if (idx === -1 || !cols[idx]) return null;
+          const val = parseFloat(cols[idx].replace(/[^\d.\-]/g, ''));
+          return isNaN(val) ? null : val;
+        };
+        commodities2.push({
+          name: cols[colIdx.name],
+          low: getNum(colIdx.low),
+          high: getNum(colIdx.high),
+          prevailing: getNum(colIdx.prevailing),
+          average: getNum(colIdx.average)
+        });
+      }
+      if (commodities2.length > 0) {
+        tables.push({
+          type: 'commodity',
+          category: '',
+          commodities: commodities2
+        });
+      }
+    }
+            category,
