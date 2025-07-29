@@ -2,7 +2,6 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 
-const fetch = require('node-fetch');
 const pdf = require('pdf-parse');
 
 // Initialize Firebase Admin SDK
