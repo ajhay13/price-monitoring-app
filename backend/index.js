@@ -45,8 +45,13 @@ app.listen(PORT, () => {
 app.get('/parse-sample-pdf', async (req, res) => {
   const pdfUrl = 'https://www.da.gov.ph/wp-content/uploads/2025/07/Daily-Price-Index-July-27-2025.pdf';
   try {
-    const response = await fetch(pdfUrl);
-    const buffer = await response.buffer();
+    // Use global fetch if available, otherwise dynamically import node-fetch
+    let fetchFn = global.fetch;
+    if (!fetchFn) {
+      fetchFn = (await import('node-fetch')).default;
+    }
+    const response = await fetchFn(pdfUrl);
+    const buffer = await response.arrayBuffer ? Buffer.from(await response.arrayBuffer()) : await response.buffer();
     const data = await pdf(buffer);
     res.send(data.text); // For now, just return the raw extracted text
   } catch (err) {
