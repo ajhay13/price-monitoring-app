@@ -2,6 +2,9 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 
+const fetch = require('node-fetch');
+const pdf = require('pdf-parse');
+
 // Initialize Firebase Admin SDK
 // Place your serviceAccountKey.json in the backend folder and do NOT commit it
 admin.initializeApp({
@@ -36,4 +39,17 @@ app.get('/getLatestPrices', async (req, res) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+});
+
+// Endpoint to fetch and parse the provided PDF
+app.get('/parse-sample-pdf', async (req, res) => {
+  const pdfUrl = 'https://www.da.gov.ph/wp-content/uploads/2025/07/Daily-Price-Index-July-27-2025.pdf';
+  try {
+    const response = await fetch(pdfUrl);
+    const buffer = await response.buffer();
+    const data = await pdf(buffer);
+    res.send(data.text); // For now, just return the raw extracted text
+  } catch (err) {
+    res.status(500).send('Error parsing PDF: ' + err.message);
+  }
 });
