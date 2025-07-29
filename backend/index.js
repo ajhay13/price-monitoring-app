@@ -141,19 +141,21 @@ app.post('/update-latest-daily-prices', async (req, res) => {
           const row = lines[j];
           if (/^Source:|^Note:|^\*/i.test(row)) break;
           if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
-          const match = row.match(/^([^\d]+?)(\d.*)$/);
-          if (!match) continue;
-          let marketCol = match[1].trim();
-          let priceString = match[2].trim();
+          // Dynamically split row into columns based on header length
+          let cols = row.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
+          if (cols.length < headerParts.length) {
+            // Try fallback: split by 1+ spaces
+            cols = row.split(/\s+/).map(c => c.trim()).filter(c => c);
+          }
+          if (cols.length < 2) continue;
+          // If there are more columns than expected, join extras as market name
+          let marketCol = cols.slice(0, cols.length - commodities.length).join(' ');
+          let priceCols = cols.slice(-commodities.length);
           if (!marketCol || /\d/.test(marketCol[0])) continue;
           let market = marketCol;
           let city = '';
           if (marketCol.includes('/')) {
             [market, city] = marketCol.split('/').map(s => s.trim());
-          }
-          let priceCols = priceString.split(/\s{2,}/).map(p => p.trim()).filter(p => p);
-          if (priceCols.length < commodities.length) {
-            priceCols = priceString.split(/\s+/).map(p => p.trim()).filter(p => p);
           }
           const prices = [];
           for (let k = 0; k < commodities.length && k < priceCols.length; k++) {
