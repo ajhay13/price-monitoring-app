@@ -108,7 +108,6 @@ app.post('/update-latest-daily-prices', async (req, res) => {
       let category = '';
       for (let lookback = i - 1; lookback >= 0 && lookback >= i - 4; lookback--) {
         const catLine = lines[lookback] || '';
-        // Look for lines in all caps or with keywords
         if (/rice|vegetable|fruit|fish|meat|egg|spice|sugar|other|commodity|poultry|livestock|summary/i.test(catLine) && catLine.length < 60) {
           category = catLine.replace(/:|\*/g, '').trim();
           break;
@@ -119,8 +118,10 @@ app.post('/update-latest-daily-prices', async (req, res) => {
       if (headerIdx === -1) break;
       headerIdx += i;
       const headerLine = lines[headerIdx];
+      // Always treat the first column as the market name, rest as commodities
       const headerParts = headerLine.split(/\s{2,}/).map(h => h.trim()).filter(h => h);
       if (headerParts.length < 2) { i = headerIdx + 1; continue; }
+      // Remove the first column (market/city), rest are commodities
       const commodities = headerParts.slice(1);
       // Parse each market row until a non-table line or next table header is found
       const markets = [];
@@ -132,7 +133,7 @@ app.post('/update-latest-daily-prices', async (req, res) => {
         // Split row by 2+ spaces (table columns)
         const cols = row.split(/\s{2,}/).map(c => c.trim());
         if (cols.length < 2) continue;
-        // Market name and city (if any)
+        // First column is always market name (may include city)
         let [marketCol, ...priceCols] = cols;
         if (!marketCol || marketCol === '') continue; // skip blank market rows
         let market = marketCol;
