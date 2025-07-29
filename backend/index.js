@@ -135,54 +135,90 @@ app.post('/update-latest-daily-prices', async (req, res) => {
         if (headerParts.length < 2) { i = headerIdx + 1; continue; }
         let commodities = headerParts.slice(1);
         if (commodities.some(c => /market/i.test(c))) { i = headerIdx + 1; continue; }
-        const markets = [];
+
+        // Build a list of known market names (from the PDF, or use a static list for NCR)
+        const knownMarkets = [
+          'Agora Public Market/San Juan',
+          'Balintawak (Cloverleaf) Market',
+          'Cartimar Market',
+          'Commonwealth Market/Quezon City',
+          'Dagonoy Market',
+          'Guadalupe Public Market/Makati',
+          'Kamuning Public Market',
+          'La Huerta Market/Parañaque',
+          'New Las Piñas City Public Market',
+          'Mandaluyong Public Market',
+          'Marikina Public Market',
+          'Mega Q-mart/Quezon City',
+          'Pamilihang Lungsod ng Muntinlupa',
+          'Muñoz Market/Quezon City',
+          'Murphy Public Market',
+          'Navotas Agora Market',
+          'New Marulas Public Market/Valenzuela',
+          'Obrero Market',
+          'Paco Market',
+          'Pasay City Market',
+          'Pasig City Mega Market',
+          'Pateros Market',
+          'Pritil Market/Manila',
+          'Quinta Market/Manila',
+          'San Andres Market/Manila',
+          'Trabajo Market'
+        ];
+
+        // Join all lines after the header into a single string for easier regex parsing
+        let tableText = '';
         let j = headerIdx + 1;
         for (; j < lines.length; j++) {
           const row = lines[j];
           if (/^Source:|^Note:|^\*/i.test(row)) break;
           if (row.toUpperCase().startsWith('MARKET') || row.toUpperCase().startsWith('COMMODITIES')) break;
-          // Dynamically split row into columns based on header length
-          let cols = row.split(/\s{2,}/).map(c => c.trim()).filter(c => c);
-          if (cols.length < headerParts.length) {
-            // Try fallback: split by 1+ spaces
-            cols = row.split(/\s+/).map(c => c.trim()).filter(c => c);
-          }
-          if (cols.length < 2) continue;
-          // If there are more columns than expected, join extras as market name
-          let marketCol = cols.slice(0, cols.length - commodities.length).join(' ');
-          let priceCols = cols.slice(-commodities.length);
-          if (!marketCol || /\d/.test(marketCol[0])) continue;
-          let market = marketCol;
-          let city = '';
-          if (marketCol.includes('/')) {
-            [market, city] = marketCol.split('/').map(s => s.trim());
-          }
+          tableText += ' ' + row;
+        }
+
+        // For each known market, extract its price ranges
+        const markets = [];
+        for (let m = 0; m < knownMarkets.length; m++) {
+          const marketName = knownMarkets[m];
+          // Find this market in the text
+          const regex = new RegExp(marketName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*([\d\.-]+(?:-\d+\.\d+)?(?:[\s\d\.-]+)*)');
+          const match = tableText.match(regex);
+          if (!match) continue;
+          // Extract price ranges (e.g., 40.00-48.00 140.00-140.00 6.00-8.00 ...)
+          let priceString = match[1].trim();
+          // Split priceString into price ranges (look for patterns like 40.00-48.00 or 140.00)
+          let priceRanges = priceString.match(/\d+\.\d+(?:-\d+\.\d+)?/g) || [];
+          // If there are more price ranges than commodities, trim
+          if (priceRanges.length > commodities.length) priceRanges = priceRanges.slice(0, commodities.length);
+          // If there are fewer, pad with nulls
+          while (priceRanges.length < commodities.length) priceRanges.push(null);
           const prices = [];
-          for (let k = 0; k < commodities.length && k < priceCols.length; k++) {
-            let priceText = priceCols[k];
+          for (let k = 0; k < commodities.length; k++) {
+            let priceText = priceRanges[k];
             let low = null, high = null;
-            if (/not available/i.test(priceText)) {
+            if (!priceText) {
               low = high = null;
             } else if (priceText.includes('-')) {
-              [low, high] = priceText.split('-').map(s => parseFloat(s.replace(/[^\d.]/g, '')));
+              [low, high] = priceText.split('-').map(s => parseFloat(s));
             } else {
-              low = high = parseFloat(priceText.replace(/[^\d.]/g, ''));
+              low = high = parseFloat(priceText);
             }
-            if (!isNaN(low) || !isNaN(high)) {
-              prices.push({
-                commodity: commodities[k],
-                low,
-                high
-              });
-            }
-          }
-          if (market && prices.length > 0) {
-            markets.push({
-              market,
-              city,
-              prices
+            prices.push({
+              commodity: commodities[k],
+              low,
+              high
             });
           }
+          let market = marketName;
+          let city = '';
+          if (marketName.includes('/')) {
+            [market, city] = marketName.split('/').map(s => s.trim());
+          }
+          markets.push({
+            market,
+            city,
+            prices
+          });
         }
         if (commodities.length > 0 && markets.length > 0) {
           tables.push({
